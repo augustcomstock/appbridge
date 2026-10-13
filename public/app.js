@@ -349,7 +349,7 @@ class App extends Component {
           <button class="go" aria-label="Discover integrations" onClick=${this.start}
             onMouseEnter=${() => { this.galaxy.hover(true); this.setState({ hov: true }); }} onMouseLeave=${() => { this.galaxy.hover(false); this.setState({ hov: false }); }}></button>
           <div class="golabel" style=${fade}><b style=${`color:${s.hov ? '#fff' : 'rgba(255,255,255,.7)'}`}>Discover integrations</b><i>⌘ ↩</i></div>
-          ${s.saved.length > 0 && html`<div class="pillrow" style=${fade}><span class="pill">${plural(s.saved.length, 'saved integrations')}</span></div>`}`}
+`}
         ${s.pick && s.phase === 'idle' && this.renderPicker()}
         ${list && html`
           <div class="fused"><${Icon} app=${A} size=${56} small /><${Icon} app=${B} size=${56} small /></div>
