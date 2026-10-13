@@ -1,0 +1,15 @@
+{
+  "name": "appbridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-powered integration discovery and builder for installed macOS apps (REA + Ghidra)",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "htm": "^3.1.1",
+    "preact": "^10.24.0"
+  }
+}

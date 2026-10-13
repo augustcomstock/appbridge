@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "appbridge", "runtimeExecutable": "node", "runtimeArgs": ["src/server.mjs"], "port": 4317 }
+  ]
+}
