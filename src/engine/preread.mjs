@@ -96,16 +96,25 @@ export function ensureGhidraDump(app) {
     await mkdir(dir, { recursive: true });
     const rea = reaSession();
     const tools = [];
-    const save = async (file, tool, args) => { const text = await rea.call(tool, args); tools.push(tool); await writeFile(join(dir, file), text); return text; };
+    const call = async (tool, args) => { const text = await rea.call(tool, args); tools.push(tool); return JSON.parse(text).result; };
+    // One entry per line so the files can be grepped.
+    const lines = (file, rows, fmt) => writeFile(join(dir, file), rows.map(fmt).join('\n') + '\n');
     try {
       await rea.start();
-      await rea.call('open_binary', { path: app.path, provider_id: 'ghidra' }); tools.push('open_binary');
-      const procedures = await save('procedures.txt', 'list_procedures');
-      await save('strings.txt', 'list_strings');
-      await save('objc-classes.txt', 'get_objc_classes').catch(() => {});
-      await save('swift-types.txt', 'analyze_swift_types').catch(() => {});
-      const names = [...new Set((procedures.match(/[-+]\[[^\]\n"]+\]|\b[A-Za-z_$][\w$.:]*\b/g) || []).filter(n => INTERESTING.test(n)))].slice(0, 40);
-      if (names.length) await save('decompiled.txt', 'batch_decompile', { addresses: names }).catch(e => writeFile(join(dir, 'decompiled-error.txt'), e.message));
+      await call('open_binary', { path: app.path, provider_id: 'ghidra' });
+      const procedures = await call('list_procedures');
+      await lines('procedures.txt', procedures, p => `${p.address}\t${p.value}`);
+      await lines('strings.txt', await call('list_strings'), x => `${x.address}\t${JSON.stringify(x.value)}`);
+      await call('get_objc_classes').then(r => lines('objc-classes.txt', r.classes, c => `${c.address}\t${c.name}`)).catch(() => {});
+      await call('analyze_swift_types').then(r => writeFile(join(dir, 'swift-types.txt'), Object.entries(r.categories).flatMap(([cat, v]) => (v.items || []).map(t => `${cat}\t${t.address}\t${t.name}`)).join('\n') + '\n')).catch(() => {});
+      const picked = procedures.filter(p => !p.procedure?.external && !p.procedure?.thunk && INTERESTING.test(p.value) && !/typeMetadataAccessor|__allocating_init/.test(p.value)).slice(0, 40);
+      const names = picked.map(p => p.value);
+      if (picked.length) {
+        const longest = v => (typeof v === 'string' ? v : v && typeof v === 'object' ? Object.values(v).map(longest).sort((a, b) => b.length - a.length)[0] || '' : '');
+        await call('batch_decompile', { addresses: picked.map(p => p.address) })
+          .then(r => writeFile(join(dir, 'decompiled.txt'), (r.items || []).map((it, k) => `### ${picked[k]?.value} @ ${it.address}\n${it.status === 'error' ? `(decompile failed: ${it.error?.message})` : longest(it)}\n`).join('\n')))
+          .catch(e => writeFile(join(dir, 'decompiled-error.txt'), e.message));
+      }
       await writeFile(join(dir, 'done.json'), JSON.stringify({ app: key(app), at: new Date().toISOString(), tools, decompiled: names }, null, 2));
       return dir;
     } catch (e) {
