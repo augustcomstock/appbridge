@@ -224,7 +224,7 @@ class App extends Component {
 
   renderSaved(it, i) {
     const s = this.state;
-    const running = s.st[it.id] === 'running', done = s.just[it.id] && !running, err = (s.note[it.id] || '').startsWith('!') ? s.note[it.id].slice(1) : null;
+    const running = s.st[it.id] === 'running', done = !running && s.just[it.id], err = (s.note[it.id] || '').startsWith('!') ? s.note[it.id].slice(1) : null;
     const arrow = this.arrows(it.directions)[0];
     const last = it.lastRun ? `Last run ${ago(it.lastRun.at)} · ${summary(it.lastRun.counts)}` : 'Built · not run yet';
     return html`<div class="row" key=${it.id} style=${`animation-delay:${(.25 + i * .07).toFixed(2)}s`}>
@@ -315,7 +315,7 @@ class App extends Component {
           <dt>Status</dt><dd>${status}</dd>
           ${it.validation && html`<dt>Tests</dt><dd>${it.validation.tests} passed${it.validation.dryRun ? ` · dry run: ${it.validation.dryRun}` : ''}</dd>`}
           ${it.lastRun && html`<dt>Last run</dt><dd>${ago(it.lastRun.at)} · ${summary(it.lastRun.counts)} · ${it.lastRun.verified ? `${it.lastRun.checked} verified at destination` : 'verification incomplete'}</dd>`}
-          ${it.apps && html`<dt>Built for</dt><dd>${it.apps.map(a => `${a.name} ${a.version}`).join(' and ')}</dd>`}
+          ${it.apps?.length > 0 && html`<dt>Built for</dt><dd>${it.apps.map(a => `${a.name} ${a.version}`).join(' and ')}</dd>`}
         </dl>
         <div class="ev"><h3>What reverse engineering added</h3><p>${it.reaContribution || 'Nothing that conventional sources did not already show.'}</p>
           ${ev(rea, 'rea')}
