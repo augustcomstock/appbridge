@@ -31,11 +31,15 @@ export function sandboxProfile(writePaths) {
 // AppleScript features that reach beyond the target app (shell, other scripts, UI scripting, files).
 const SCRIPT_DENY = /do\s+shell\s+script|run\s+script|load\s+script|store\s+script|system\s+events|keystroke|key\s+code|open\s+location|posix\s+file|scripting\s+additions|osascript|\bcurl\b|using\s+terms\s+from/i;
 
-// Runs one AppleScript on behalf of a sandboxed adapter, only against apps its integration declared.
-async function brokerAutomate(req, automates) {
+// Verbs that change an app's data or UI; refused when an agent probes an app during investigation.
+const SCRIPT_MUTATES = /\b(make|delete|move|duplicate|save|close|quit|print|set|open|activate|launch|reopen|show|run)\b/i;
+
+// Runs one AppleScript on behalf of a sandboxed adapter (or a read-only agent probe), only against the declared apps.
+export async function brokerAutomate(req, automates, { readOnly = false } = {}) {
   if (!automates.includes(req.app)) throw new Error(`automation of ${req.app} was not declared in resources.automates`);
   const script = String(req.script || '');
   if (SCRIPT_DENY.test(script)) throw new Error('script uses a feature AppBridge does not allow (shell, UI scripting, files or other scripts)');
+  if (readOnly && SCRIPT_MUTATES.test(script)) throw new Error('probes must be read-only expressions (get / count / exists / name of ...); no set, make, delete, open, show or similar');
   const allowed = new Set();
   for (const id of automates) { const app = await getApp(id); allowed.add(id.toLowerCase()); if (app) allowed.add(app.name.toLowerCase()); }
   const targets = [...script.matchAll(/application\s+(?:id\s+)?"([^"]+)"/gi)].map(m => m[1].toLowerCase());

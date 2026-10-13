@@ -84,6 +84,9 @@ class App extends Component {
     Promise.all([iconTint(iconUrl(L)), iconTint(iconUrl(R))]).then(([a, b]) => { if (this.state.L === L && this.state.R === R) this.galaxy.setTints(a, b); });
     const { saved } = await api(`/api/pair?a=${encodeURIComponent(L)}&b=${encodeURIComponent(R)}`).catch(() => ({ saved: [] }));
     if (this.state.L === L && this.state.R === R) this.setState({ saved });
+    // Once the pair has been left alone for a moment, start reading both apps in the background.
+    clearTimeout(this.prewarmTimer);
+    this.prewarmTimer = setTimeout(() => { if (this.state.L === L && this.state.R === R && this.state.phase === 'idle') api('/api/prewarm', { a: L, b: R }).catch(() => {}); }, 2500);
   }
 
   // Which arrows a set of [from, to] directions allows, relative to the current left/right sides.
@@ -102,7 +105,7 @@ class App extends Component {
     this.streams.push(es);
     es.onmessage = m => {
       const ev = JSON.parse(m.data);
-      if (ev.type === 'log') return this.setState(x => ({ logLabel: ev.label, log: [...(x.logLabel === ev.label ? x.log : []), ev].slice(-600) }));
+      if (ev.type === 'log') return this.setState(x => ({ logLabel: ev.label, log: [...x.log, ev].slice(-800) }));
       onEvent(ev);
       if (ev.type === 'done') { es.close(); this.streams = this.streams.filter(s => s !== es); }
     };
@@ -111,7 +114,7 @@ class App extends Component {
   start = async () => {
     const s = this.state;
     if (s.phase !== 'idle' || !s.L || !s.R) return;
-    this.setState({ phase: 'merge', pick: null, hov: false, disc: [], discError: null });
+    this.setState({ phase: 'merge', pick: null, hov: false, disc: [], discError: null, log: [], logLabel: '' });
     this.galaxy.merge();
     setTimeout(() => { if (this.state.phase === 'merge') this.setState({ phase: 'list' }); }, MERGE_MS * .8);
     const health = s.health?.loggedIn ? s.health : await api('/api/health').catch(() => s.health);
@@ -310,7 +313,7 @@ class App extends Component {
       <div class="termhead"><b>claude</b><span>${s.logLabel || 'no session yet'}</span><span class="grow"></span>${busy && html`<span class="breathe"></span>`}<span>${busy ? 'running' : s.log.length ? 'ended' : ''}</span></div>
       <div class="termbody" ref=${el => { if (el) el.scrollTop = el.scrollHeight; }}>
         ${s.log.length === 0 && html`<div class="t-result">Nothing has run in this window yet.</div>`}
-        ${s.log.map(l => html`<div class=${'t-' + l.kind}>${mark[l.kind]}${l.text}</div>`)}
+        ${s.log.map((l, i) => html`${l.label !== s.log[i - 1]?.label && html`<div class="t-label">${l.label}</div>`}<div class=${'t-' + l.kind}>${mark[l.kind]}${l.text}</div>`)}
       </div>
     </div></div>`;
   }

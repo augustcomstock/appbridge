@@ -46,15 +46,22 @@ export async function health() {
 
 const TOOLS_SERVER = join(dirname(fileURLToPath(import.meta.url)), 'agent-tools.mjs');
 
-function mcpConfig(cwd) {
+export function reaEnv() {
   // Ghidra's first analysis of a large app binary takes longer than REA's 5.5-minute default.
   const env = { REA_GHIDRA_STARTUP_TIMEOUT_MS: '2400000' };
   if (ghidraDir()) env.GHIDRA_INSTALL_DIR = ghidraDir();
   env.PATH = [javaHome() && `${javaHome()}/bin`, dirname(process.execPath), process.env.PATH].filter(Boolean).join(':');
   if (javaHome()) env.JAVA_HOME = javaHome();
+  return env;
+}
+
+export const reaCommand = () => [process.execPath, realpathSync(reaEntry()), '--mcp'];
+
+function mcpConfig(cwd, apps) {
+  const env = reaEnv();
   return JSON.stringify({ mcpServers: {
     rea: { command: process.execPath, args: [realpathSync(reaEntry()), '--mcp'], env },
-    appbridge: { command: process.execPath, args: [TOOLS_SERVER, cwd] }
+    appbridge: { command: process.execPath, args: [TOOLS_SERVER, cwd, apps.join(',')] }
   } });
 }
 
@@ -71,6 +78,8 @@ function describeTool(name, input = {}) {
     return `REA · ${name.slice(10).replace(/_/g, ' ')}${target ? ' · ' + short(basename(String(target)), 36) : ''}`;
   }
   if (name === 'mcp__appbridge__dry_run_plan') return 'Dry-running the adapter against the real apps';
+  if (name === 'mcp__appbridge__probe_app') return 'Probing the app (read-only)';
+  if (name === 'mcp__appbridge__report_candidate') return 'Reporting a candidate';
   if (name === 'ToolSearch') return 'Looking up tools';
   if (name === 'Bash') return short(input.description || input.command);
   if (name === 'Read') return `Reading ${basename(input.file_path || '')}`;
@@ -83,18 +92,19 @@ const resultText = content => short(typeof content === 'string' ? content : (con
 
 // Resolves with { ok, reaCalls, tools, error } once the agent exits. onStatus gets one-line progress;
 // onLog gets the session transcript as { kind: 'say' | 'tool' | 'result' | 'error' | 'end', text }.
-export function runAgent({ cwd, prompt, logFile, onStatus = () => {}, onLog = () => {}, maxTurns = 120 }) {
+export function runAgent({ cwd, prompt, logFile, apps = [], model = null, onStatus = () => {}, onLog = () => {}, maxTurns = 120 }) {
   const bin = claudeBin();
   if (!bin) return Promise.resolve({ ok: false, error: 'Claude Code was not found on this Mac.', reaCalls: [] });
   const args = [
     '-p', prompt,
     '--output-format', 'stream-json', '--verbose',
-    '--mcp-config', mcpConfig(cwd), '--strict-mcp-config',
+    '--mcp-config', mcpConfig(cwd, apps), '--strict-mcp-config',
     '--settings', SETTINGS,
     '--permission-mode', 'acceptEdits',
     '--allowedTools', 'Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'mcp__rea', 'mcp__appbridge',
     '--add-dir', TEST_DIR,
-    '--max-turns', String(maxTurns)
+    '--max-turns', String(maxTurns),
+    ...(model ? ['--model', model] : [])
   ];
   return new Promise(async resolve => {
     await mkdir(dirname(logFile), { recursive: true });

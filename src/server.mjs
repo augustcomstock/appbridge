@@ -9,6 +9,7 @@ import * as lib from './engine/library.mjs';
 import * as runner from './engine/runner.mjs';
 import { runAgent, health } from './engine/agent.mjs';
 import { discoveryPrompt, buildPrompt } from './engine/prompts.mjs';
+import * as preread from './engine/preread.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT || 4317);
@@ -44,31 +45,42 @@ async function discover(job, a, b, request) {
   const dir = lib.pairDir(a, b);
   const existing = await lib.listIntegrations(a, b);
   const built = new Set(existing.map(e => e.id));
-  const sent = new Set();
+  const sent = new Map();
+  let reaUsed = false;
+  // Rows are sent as the agent reports them; a re-report of the same id updates the row.
   const flush = async () => {
     for (const c of await lib.readCandidates(a, b)) {
-      if (sent.has(c.id) || built.has(c.id)) continue;
-      sent.add(c.id);
-      emit(job, { type: 'candidate', candidate: c });
+      const row = { ...c, method: honestMethod(c.method, reaUsed ? ['x'] : []) };
+      if (built.has(c.id) || sent.get(c.id) === JSON.stringify(row)) continue;
+      sent.set(c.id, JSON.stringify(row));
+      emit(job, { type: 'candidate', candidate: row });
     }
   };
+  // Pre-reads are per app and cached; anything missing is read now, both apps in parallel. Ghidra is never waited for.
+  [A, B].forEach(app => preread.ensureGhidraDump(app).catch(() => {}));
+  const profiles = await Promise.all([A, B].map(app => preread.ensureProfile(app, {
+    onStatus: text => emit(job, { type: 'status', text }),
+    onLog: entry => emit(job, { type: 'log', label: `Pre-read · ${app.name}`, ...entry })
+  })));
+  const ghidraDumps = [A, B].map(preread.ghidraDumpDir);
+  const prereadCalls = [...profiles.flatMap(preread.profileReaTools), ...[A, B].flatMap(preread.ghidraTools)];
+  reaUsed = prereadCalls.length > 0;
   const watcher = watch(file, () => { flush().catch(() => {}); });
   const result = await runAgent({
     cwd: dir,
-    prompt: discoveryPrompt({ a: A, b: B, request, existing }),
+    apps: [a, b],
+    model: 'sonnet',
+    maxTurns: 60,
+    prompt: discoveryPrompt({ a: A, b: B, request, existing, profiles, ghidraDumps }),
     logFile: join(dir, 'agent-logs', `discover-${Date.now()}.jsonl`),
     onStatus: text => emit(job, { type: 'status', text }),
     onLog: entry => emit(job, { type: 'log', label: 'Discovery', ...entry })
   });
   watcher.close();
+  reaUsed = reaUsed || result.reaCalls.length > 0;
   await flush();
-  await writeFile(join(dir, 'discovery-meta.json'), JSON.stringify({ at: new Date().toISOString(), request, reaToolCalls: result.reaCalls.map(c => c.tool) }, null, 2));
-  if (result.reaCalls.length === 0) {
-    for (const c of await lib.readCandidates(a, b)) {
-      if (c.method === 'rea') emit(job, { type: 'candidate', candidate: { ...c, method: 'local' } });
-    }
-  }
-  emit(job, { type: 'done', ok: result.ok, error: result.error, reaCalls: result.reaCalls.length, found: sent.size });
+  await writeFile(join(dir, 'discovery-meta.json'), JSON.stringify({ at: new Date().toISOString(), request, reaToolCalls: [...prereadCalls, ...result.reaCalls.map(c => c.tool)] }, null, 2));
+  emit(job, { type: 'done', ok: result.ok, error: result.error, found: sent.size });
 }
 
 async function build(job, a, b, selections) {
@@ -82,7 +94,9 @@ async function build(job, a, b, selections) {
     const directions = candidate.directions.filter(d => sel.directions.some(s => s[0] === d[0] && s[1] === d[1]));
     const result = await runAgent({
       cwd: dir,
-      prompt: buildPrompt({ a: A, b: B, candidate, directions: directions.length ? directions : candidate.directions, existingNotes: existsSync(join(dir, 'notes.md')) }),
+      apps: [a, b],
+      prompt: buildPrompt({ a: A, b: B, candidate, directions: directions.length ? directions : candidate.directions, existingNotes: existsSync(join(dir, 'notes.md')),
+        profiles: await Promise.all([A, B].map(preread.readProfile)), ghidraDumps: [A, B].map(preread.ghidraDumpDir) }),
       logFile: join(dir, 'agent-logs', `build-${candidate.id}-${Date.now()}.jsonl`),
       onStatus: text => emit(job, { type: 'status', id: candidate.id, text }),
       onLog: entry => emit(job, { type: 'log', label: `Build · ${candidate.title}`, ...entry })
@@ -211,6 +225,11 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST') {
       const body = await readBody(req);
+      if (url.pathname === '/api/prewarm') {
+        const pair = await pairApps(body.a, body.b);
+        if ((await health()).loggedIn) pair.forEach(preread.prewarm);
+        return json(res, 200, { ok: true });
+      }
       if (url.pathname === '/api/discover') {
         await pairApps(body.a, body.b);
         const job = createJob();

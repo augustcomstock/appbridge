@@ -13,39 +13,94 @@ const METHODS = `## Classifying the method
 - \`local\`: local files or databases that are accessible but not a documented interface.
 - \`rea\`: reverse engineering with REA/Ghidra materially contributed, meaning you would not have found or could not have implemented it from the conventional sources alone. Calling a REA tool is not enough; if a conventional source would have told you the same thing, it is not \`rea\`.`;
 
-export function discoveryPrompt({ a, b, request, existing }) {
-  return `You are the investigation agent for AppBridge. Find ways to move structured data between two applications installed on this Mac that were not designed to work together.
+const SANDBOX = `## Your environment
+- Your shell is sandboxed: no network, no Apple Events, no connecting to other apps' sockets. \`osascript\` against an app, \`sdef\`, and app CLIs that talk to a running app all fail there. Do not try them.
+- To ask an app something, use the \`mcp__appbridge__probe_app\` tool: one read-only AppleScript expression (get / count / exists / name of / properties of). It refuses anything that changes data or UI. Ask for structure and counts, not the user's content.
+- Scripting dictionaries are files: read \`<app>/Contents/Resources/*.sdef\` directly.
+- Quick static looks need no special tool: \`plutil -p\`, \`strings\`, \`nm\`, \`otool -L\`, \`sqlite3 -readonly <db> .schema\`.`;
+
+const REA_TOOLS = 'open_binary, inspect_plist, inspect_macho, inspect_signature, decode_interface_builder, inspect_keyed_archive, analyze_javascript_application, trace_application_feature, get_objc_classes, analyze_swift_types, search_strings, search_procedures, procedure_pseudo_code, batch_decompile, xrefs, trace_feature';
+const REA_LOAD = `The REA tools are named \`mcp__rea__<name>\`. The ones relevant to macOS apps are: ${REA_TOOLS}. Load the ones you need in a single ToolSearch call (\`select:mcp__rea__open_binary,mcp__rea__inspect_macho,...\`) instead of searching one at a time. Call \`open_binary\` on the app first; the others act on the open target.`;
+
+const ghidraBlock = dump => dump
+  ? `A full Ghidra analysis of this app's main binary has already been run through REA and saved in \`${dump}\`: \`procedures.txt\` (every function), \`strings.txt\`, \`objc-classes.txt\`, \`swift-types.txt\` and \`decompiled.txt\` (decompiled URL, scripting, pasteboard and import/export handlers). Search those files with Grep; that is instant. Do NOT call REA tools that need a fresh native analysis (search_strings, search_procedures, procedure_pseudo_code, xrefs, batch_decompile, binary_overview, trace_feature): each new session re-runs Ghidra for several minutes.`
+  : `No saved Ghidra analysis exists for this app yet. Do NOT call REA tools that need a full native analysis (search_strings, search_procedures, procedure_pseudo_code, xrefs, batch_decompile, binary_overview, trace_feature): they take 7 minutes or more. Use the light REA tools (inspect_macho, inspect_plist, inspect_signature, decode_interface_builder, inspect_keyed_archive) and shell \`strings\` / \`nm\` instead.`;
+
+// One app, once per version: a compact capability profile that later pair discoveries build on.
+export function profilePrompt({ app, electron, ghidraDump }) {
+  return `You are profiling one macOS application for AppBridge, so that later sessions can work out how to move data in and out of it without repeating this investigation. Be fast and concrete: aim to finish in about 20 tool calls.
+
+## The application
+${appBlock(app)}
+${electron ? 'It is an Electron app: its logic is JavaScript in `Contents/Resources/*.asar` (and possibly an updated copy under ~/Library/Application Support/<name>/). REA\'s `analyze_javascript_application` can be very large; prefer extracting or grepping the asar for the specific things below.' : 'It is a native app.'}
+
+${RULES.replace(/- You work in the current directory[^\n]*\n?/, '')}
+
+${SANDBOX}
+
+## Reverse engineering
+${REA_LOAD}
+${electron ? '' : ghidraBlock(ghidraDump)}
+Use REA for what the ordinary sources cannot tell you: undeclared URL-scheme parameters, private file-format fields, hidden CLI commands or flags, what a scripting command really does, undeclared pasteboard or document types.
+
+## What to find out
+1. Scripting: is there a scripting dictionary? Which classes, which properties are writable, which commands (make, delete, custom)?
+2. URL schemes and document/pasteboard types (Info.plist), and what the URL handlers accept.
+3. Command-line tools shipped in the bundle and their subcommands.
+4. Where its data lives (files, SQLite, plists under ~/Library, app/group containers) and its shape: schema, file format. Which of it is readable from outside.
+5. Plugins or extension points that are installed and relevant to data exchange.
+
+## Output
+Write \`profile.md\` in the current directory, under 120 lines, with exactly these sections:
+
+# ${app.name} ${app.version || ''} (${app.bundleId})
+## Data model            (the kinds of objects it holds and their main fields)
+## Ways to read          (each: mechanism, what it returns, whether you ran it, any catch)
+## Ways to write         (each: mechanism, what it can create or change, whether it is documented, any catch)
+## Local storage         (paths and formats; note anything that needs special permission)
+## What reverse engineering added   (specific findings with the tool that produced each; say "nothing beyond the conventional sources" if so)
+## Dead ends             (things that look promising but do not work, so nobody retries them)
+
+State only what you observed. Mark anything you inferred but did not run as "(not run)".`;
+}
+
+export function discoveryPrompt({ a, b, request, existing, profiles, ghidraDumps }) {
+  return `You are the discovery agent for AppBridge. Find ways to move structured data between two applications installed on this Mac that were not designed to work together. Both apps have already been investigated; their profiles are below. Your job is to combine them into concrete integrations, verify each one quickly, and report it the moment it is verified. The user is watching the list fill in, so speed to the first verified result matters.
 
 ## The two applications
 ${appBlock(a)}
 ${appBlock(b)}
 
-${request ? `## What the user asked for\n"${request}"\nInvestigate this request specifically, as well as other useful structured-data transfers you come across.\n` : 'The user gave no specific request: look for useful structured-data transfers.\n'}
+${request ? `## What the user asked for\n"${request}"\nCover this request first, then other useful structured-data transfers.\n` : 'The user gave no specific request: look for useful structured-data transfers.\n'}
 ${existing.length ? `## Already built for this pair (do not report these again)\n${existing.map(e => `- ${e.id}: ${e.title}`).join('\n')}\n` : ''}
+## Profile: ${a.name}
+${profiles[0]}
+
+## Profile: ${b.name}
+${profiles[1]}
+
 ${RULES}
 
-## How to investigate
-1. Conventional interfaces first, for both apps: scripting dictionary (read \`<app>/Contents/Resources/*.sdef\` directly; the \`sdef\` command is not available), URL schemes and document types in Info.plist, bundled command-line tools, documented import/export formats, and the app's local data (files, SQLite/plist stores under ~/Library and app containers; use \`sqlite3 -readonly\` and look at schema only).
-2. Then reverse engineering with the REA MCP tools (\`mcp__rea__*\`), on both apps. Use whatever fits the target: Mach-O / plist / signature inspection, Objective-C and Swift dispatch metadata, string and symbol search, Ghidra-backed decompilation of functions that handle URLs, pasteboard types, file import, or persistence; for Electron apps the JavaScript application analysis. Look specifically for what the conventional pass could not tell you: undocumented URL-scheme parameters, private file-format fields, undeclared pasteboard or document types, hidden command-line flags, the real semantics of database columns.
-   Ghidra's first analysis of a large native binary can take 10 minutes or more. Start it early, pass a snapshot path under \`./snapshots/\` where the tool accepts one so later calls and sessions reuse the analysis, and prefer the smaller of two candidate binaries (a helper, framework or plugin that holds the logic you care about) over the whole main executable. If a provider times out, record that in notes.md and continue with the lighter static tools; do not report findings you did not get.
-   Do this even if step 1 already found workable interfaces: the point is to learn what reverse engineering adds. But do not prefer a reverse-engineered route when a supported one is safer or simpler.
-   Your shell is sandboxed: it has no network and cannot send Apple Events, so \`osascript\` against an app fails there with -10810 or -10004. That is the sandbox, not the app.
-3. Where it is cheap and read-only, validate a candidate with a probe (for example read a list of names through the scripting interface, or parse a file in the format you inferred).
+${SANDBOX}
+
+## Reverse-engineering evidence on hand
+${[a, b].map((app, i) => `${app.name}: ${ghidraDumps[i] ? `saved Ghidra analysis in \`${ghidraDumps[i]}\` (procedures.txt, strings.txt, objc-classes.txt, swift-types.txt, decompiled.txt). Grep it when a question is about how the app really behaves.` : 'no saved native analysis (see its profile for what was examined).'}`).join('\n')}
+Do not start a fresh native analysis with REA during discovery: it takes minutes. ${REA_LOAD}
+
+## How to work
+1. In your first message, with no tool calls, list 4 to 6 candidate integrations as one line each (what moves, which direction, the read mechanism, the write mechanism), most useful first. Use the profiles; do not re-investigate the apps.
+2. Then take them one at a time, in that order. For each, spend at most 3 or 4 tool calls confirming that the read side really returns what you expect (a read-only probe, or parsing a file) and that the write mechanism exists as the profile says. Then IMMEDIATELY call \`mcp__appbridge__report_candidate\` before starting the next one.
+   - \`status: "validated"\` only if a probe you ran in this session showed the read side working AND the profile or your check shows the write mechanism exists. Writes can never be executed during discovery, so say so in the evidence rather than implying they were.
+   - If you cannot confirm it within that budget, move on and keep it for step 3.
+3. At the end, report the remaining plausible ones with \`status: "speculative"\`. Drop any that your checks disproved.
+4. Stop. Finish with two sentences on what reverse engineering did and did not add for this pair.
 
 ${METHODS}
 
-## Reporting
-Append each integration candidate to \`discovery.jsonl\` in the current directory AS SOON AS you have it (the user is watching the list fill in), one JSON object per line, no surrounding array:
-
-{"id":"kebab-case-id","title":"Short title, max 5 words","description":"One plain sentence a non-technical user would understand.","noun":"tasks","method":"std|local|rea","status":"speculative|validated","directions":[["<from bundle ID>","<to bundle ID>"]],"evidence":[{"source":"conventional|rea","tool":"sdef | sqlite3 | mcp__rea__<tool> | ...","finding":"What exactly you observed."}],"reaContribution":"What reverse engineering added that conventional sources did not, or null."}
-
-- \`directions\` lists every direction you believe is implementable; include both orders if both are.
-- \`status\` is \`validated\` only if a probe you ran in this session showed both the read side and the write mechanism exist as described. Otherwise \`speculative\`.
-- Report between 3 and 6 candidates, most useful first. Fewer is fine if that is all the evidence supports. Use \`printf '%s\\n' '<json>' >> discovery.jsonl\` or the Write/Edit tools.
-- Finish with a two-sentence summary of what reverse engineering did and did not add.`;
+Each report needs: a kebab-case \`id\`, a \`title\` of at most 5 words, a one-sentence \`description\` a non-technical user would understand, a \`noun\` (what is transferred), \`method\`, \`status\`, \`directions\` (every [fromBundleId, toBundleId] you believe is implementable), \`evidence\` (each with source "conventional" or "rea", the tool, and exactly what was observed), and \`reaContribution\` (what reverse engineering added beyond conventional sources, or null).`;
 }
 
-export function buildPrompt({ a, b, candidate, directions, existingNotes }) {
+export function buildPrompt({ a, b, candidate, directions, existingNotes, profiles = [], ghidraDumps = [] }) {
   return `You are the build agent for AppBridge. Build a reusable, deterministic adapter that transfers data between two applications on this Mac.
 
 ## The two applications
@@ -58,7 +113,14 @@ ${JSON.stringify(candidate, null, 2)}
 Directions to implement: ${directions.map(d => `${d[0]} → ${d[1]}`).join(' and ')}
 
 ${RULES}
-${existingNotes ? '\n`notes.md` already has findings from the discovery session for this pair.\n' : ''}
+${existingNotes ? '\n`notes.md` already has findings from earlier sessions for this pair.\n' : ''}
+${SANDBOX}
+
+${profiles[0] ? `## Profile: ${a.name}\n${profiles[0]}\n` : ''}
+${profiles[1] ? `## Profile: ${b.name}\n${profiles[1]}\n` : ''}
+${[a, b].map((app, i) => (ghidraDumps[i] ? `A saved Ghidra analysis of ${app.name} is in \`${ghidraDumps[i]}\` (procedures.txt, strings.txt, decompiled.txt): grep it before considering a fresh native analysis.` : '')).filter(Boolean).join('\n')}
+${REA_LOAD}
+
 ## What to produce, in \`./${candidate.id}/\`
 
 ### 1. \`adapter.mjs\`
