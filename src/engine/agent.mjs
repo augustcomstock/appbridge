@@ -6,6 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ghidraDir, javaHome, TEST_DIR } from './paths.mjs';
 
 const run = promisify(execFile);
@@ -43,13 +44,18 @@ export async function health() {
   return { claude: !!bin, loggedIn, rea: !!reaEntry(), ghidra: !!ghidraDir() && !!javaHome() };
 }
 
-function mcpConfig() {
+const TOOLS_SERVER = join(dirname(fileURLToPath(import.meta.url)), 'agent-tools.mjs');
+
+function mcpConfig(cwd) {
   // Ghidra's first analysis of a large app binary takes longer than REA's 5.5-minute default.
   const env = { REA_GHIDRA_STARTUP_TIMEOUT_MS: '2400000' };
   if (ghidraDir()) env.GHIDRA_INSTALL_DIR = ghidraDir();
   env.PATH = [javaHome() && `${javaHome()}/bin`, dirname(process.execPath), process.env.PATH].filter(Boolean).join(':');
   if (javaHome()) env.JAVA_HOME = javaHome();
-  return JSON.stringify({ mcpServers: { rea: { command: process.execPath, args: [realpathSync(reaEntry()), '--mcp'], env } } });
+  return JSON.stringify({ mcpServers: {
+    rea: { command: process.execPath, args: [realpathSync(reaEntry()), '--mcp'], env },
+    appbridge: { command: process.execPath, args: [TOOLS_SERVER, cwd] }
+  } });
 }
 
 // Bash runs inside Claude Code's OS sandbox: no network, writes confined to the working directories.
@@ -64,6 +70,8 @@ function describeTool(name, input = {}) {
     const target = input.path || input.binary_path || input.app_path || input.query || input.name || input.address || '';
     return `REA · ${name.slice(10).replace(/_/g, ' ')}${target ? ' · ' + short(basename(String(target)), 36) : ''}`;
   }
+  if (name === 'mcp__appbridge__dry_run_plan') return 'Dry-running the adapter against the real apps';
+  if (name === 'ToolSearch') return 'Looking up tools';
   if (name === 'Bash') return short(input.description || input.command);
   if (name === 'Read') return `Reading ${basename(input.file_path || '')}`;
   if (name === 'Write' || name === 'Edit') return `Writing ${basename(input.file_path || '')}`;
@@ -78,10 +86,10 @@ export function runAgent({ cwd, prompt, logFile, onStatus = () => {}, maxTurns =
   const args = [
     '-p', prompt,
     '--output-format', 'stream-json', '--verbose',
-    '--mcp-config', mcpConfig(), '--strict-mcp-config',
+    '--mcp-config', mcpConfig(cwd), '--strict-mcp-config',
     '--settings', SETTINGS,
     '--permission-mode', 'acceptEdits',
-    '--allowedTools', 'Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'mcp__rea',
+    '--allowedTools', 'Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'mcp__rea', 'mcp__appbridge',
     '--add-dir', TEST_DIR,
     '--max-turns', String(maxTurns)
   ];

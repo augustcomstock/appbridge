@@ -52,8 +52,19 @@ test('sandbox blocks writes outside declared paths', async () => {
 test('sandbox blocks network access', async () => {
   const { spawnSync } = await import('node:child_process');
   const host = new URL('../src/engine/adapter-host.mjs', import.meta.url).pathname;
-  const r = spawnSync('/usr/bin/sandbox-exec', ['-p', runner.sandboxProfile([]), process.execPath, host, dir, 'net'], { input: '{}' });
+  const r = spawnSync('/usr/bin/sandbox-exec', ['-p', runner.sandboxProfile([]), process.execPath, host, dir, 'net'], { input: '{}', stdio: ['pipe', 'pipe', 'pipe', 'pipe'], timeout: 20000 });
   assert.notEqual(r.status, 0);
+});
+
+test('automation is brokered only to declared apps and safe scripts', async () => {
+  writeFileSync(join(dir, 'adapter.mjs'), `export async function plan({ config, automate }) {
+    const out = await automate({ app: config.app, script: config.script, args: ['x'] }).catch(e => 'ERR ' + e.message);
+    return { items: [{ action: 'skip', key: 'k', name: out }] };
+  }`);
+  const run = (app, script, automates) => runner.plan(dir, { config: { app, script }, resources: { automates } }, direction, {}).then(i => i[0].name);
+  assert.match(await run('com.apple.reminders', 'tell application id "com.apple.reminders" to count of lists', []), /not declared/);
+  assert.match(await run('com.apple.reminders', 'tell application id "com.apple.reminders" to do shell script "id"', ['com.apple.reminders']), /does not allow/);
+  assert.match(await run('com.apple.reminders', 'tell application "Finder" to count of windows', ['com.apple.reminders']), /undeclared application/);
 });
 
 test('plan rejects invalid actions', async () => {
