@@ -79,8 +79,11 @@ function describeTool(name, input = {}) {
   return name;
 }
 
-// Resolves with { ok, reaCalls, tools, error } once the agent exits. onStatus gets one-line progress.
-export function runAgent({ cwd, prompt, logFile, onStatus = () => {}, maxTurns = 120 }) {
+const resultText = content => short(typeof content === 'string' ? content : (content || []).map(c => c.text || `[${c.type}]`).join(' '), 400);
+
+// Resolves with { ok, reaCalls, tools, error } once the agent exits. onStatus gets one-line progress;
+// onLog gets the session transcript as { kind: 'say' | 'tool' | 'result' | 'error' | 'end', text }.
+export function runAgent({ cwd, prompt, logFile, onStatus = () => {}, onLog = () => {}, maxTurns = 120 }) {
   const bin = claudeBin();
   if (!bin) return Promise.resolve({ ok: false, error: 'Claude Code was not found on this Mac.', reaCalls: [] });
   const args = [
@@ -105,12 +108,19 @@ export function runAgent({ cwd, prompt, logFile, onStatus = () => {}, maxTurns =
       try { ev = JSON.parse(line); } catch { return; }
       if (ev.type === 'assistant') {
         for (const block of ev.message?.content || []) {
+          if (block.type === 'text' && block.text.trim()) onLog({ kind: 'say', text: block.text.trim() });
           if (block.type !== 'tool_use') continue;
+          onLog({ kind: 'tool', text: `${block.name.replace(/^mcp__/, '').replace(/__/g, '.')} ${short(JSON.stringify(block.input), 300)}` });
           if (block.name.startsWith('mcp__rea__')) reaCalls.push({ tool: block.name.slice(10), input: block.input, at: new Date().toISOString() });
           onStatus(describeTool(block.name, block.input));
         }
+      } else if (ev.type === 'user' && Array.isArray(ev.message?.content)) {
+        for (const block of ev.message.content) {
+          if (block.type === 'tool_result') onLog({ kind: block.is_error ? 'error' : 'result', text: resultText(block.content) });
+        }
       } else if (ev.type === 'result') {
         final = ev;
+        onLog({ kind: 'end', text: `${ev.is_error ? 'Stopped' : 'Finished'} · ${ev.num_turns} turns · $${(ev.total_cost_usd || 0).toFixed(2)}` });
       }
     };
     child.stdout.on('data', d => {

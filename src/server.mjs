@@ -57,7 +57,8 @@ async function discover(job, a, b, request) {
     cwd: dir,
     prompt: discoveryPrompt({ a: A, b: B, request, existing }),
     logFile: join(dir, 'agent-logs', `discover-${Date.now()}.jsonl`),
-    onStatus: text => emit(job, { type: 'status', text })
+    onStatus: text => emit(job, { type: 'status', text }),
+    onLog: entry => emit(job, { type: 'log', label: 'Discovery', ...entry })
   });
   watcher.close();
   await flush();
@@ -83,7 +84,8 @@ async function build(job, a, b, selections) {
       cwd: dir,
       prompt: buildPrompt({ a: A, b: B, candidate, directions: directions.length ? directions : candidate.directions, existingNotes: existsSync(join(dir, 'notes.md')) }),
       logFile: join(dir, 'agent-logs', `build-${candidate.id}-${Date.now()}.jsonl`),
-      onStatus: text => emit(job, { type: 'status', id: candidate.id, text })
+      onStatus: text => emit(job, { type: 'status', id: candidate.id, text }),
+      onLog: entry => emit(job, { type: 'log', label: `Build · ${candidate.title}`, ...entry })
     });
     const written = await lib.getIntegration(a, b, candidate.id);
     const ok = written && existsSync(join(dir, candidate.id, 'adapter.mjs')) && written.validation?.status === 'passed';

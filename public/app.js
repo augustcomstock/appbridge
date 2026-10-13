@@ -45,7 +45,7 @@ const Tick = ({ stroke = '#111' }) => html`<svg width="10" height="8" viewBox="0
 class App extends Component {
   state = { apps: [], L: null, R: null, health: null, phase: 'idle', prompt: '', pick: null, q: '', hov: false,
     saved: [], disc: [], pending: false, discError: null,
-    sel: {}, st: {}, note: {}, just: {}, sheet: null, inspect: null, toast: null };
+    sel: {}, st: {}, note: {}, just: {}, sheet: null, inspect: null, toast: null, cli: false, log: [], logLabel: '' };
   canvas = createRef();
   hero = createRef();
   queue = [];
@@ -65,8 +65,11 @@ class App extends Component {
 
   onKey = e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') this.start();
+    // Backtick shows the transcript of the Claude CLI session working for this window.
+    if (e.key === '`' && !e.metaKey && !e.ctrlKey && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); return this.setState(x => ({ cli: !x.cli })); }
     if (e.key === 'Escape') {
-      if (this.state.inspect) this.setState({ inspect: null });
+      if (this.state.cli) this.setState({ cli: false });
+      else if (this.state.inspect) this.setState({ inspect: null });
       else if (this.state.sheet) this.closeSheet();
       else if (this.state.pick) this.setState({ pick: null });
     }
@@ -99,6 +102,7 @@ class App extends Component {
     this.streams.push(es);
     es.onmessage = m => {
       const ev = JSON.parse(m.data);
+      if (ev.type === 'log') return this.setState(x => ({ logLabel: ev.label, log: [...(x.logLabel === ev.label ? x.log : []), ev].slice(-600) }));
       onEvent(ev);
       if (ev.type === 'done') { es.close(); this.streams = this.streams.filter(s => s !== es); }
     };
@@ -299,6 +303,18 @@ class App extends Component {
     </div></div>`;
   }
 
+  renderCli() {
+    const s = this.state, busy = this.streams.length > 0;
+    const mark = { say: '', tool: '⏵ ', result: '  ', error: '  ', end: '' };
+    return html`<div class="veil" onClick=${e => { if (e.target === e.currentTarget) this.setState({ cli: false }); }}><div class="sheet term" role="dialog" aria-label="Claude CLI session">
+      <div class="termhead"><b>claude</b><span>${s.logLabel || 'no session yet'}</span><span class="grow"></span>${busy && html`<span class="breathe"></span>`}<span>${busy ? 'running' : s.log.length ? 'ended' : ''}</span></div>
+      <div class="termbody" ref=${el => { if (el) el.scrollTop = el.scrollHeight; }}>
+        ${s.log.length === 0 && html`<div class="t-result">Nothing has run in this window yet.</div>`}
+        ${s.log.map(l => html`<div class=${'t-' + l.kind}>${mark[l.kind]}${l.text}</div>`)}
+      </div>
+    </div></div>`;
+  }
+
   renderInspect() {
     const it = this.state.inspect;
     const rea = (it.evidence || []).filter(e => e.source === 'rea'), conv = (it.evidence || []).filter(e => e.source !== 'rea');
@@ -330,7 +346,7 @@ class App extends Component {
     const merging = s.phase === 'merge', list = s.phase === 'list';
     const fade = `opacity:${merging ? 0 : 1}`;
     const nSel = Object.values(s.sel).filter(Boolean).length;
-    const tall = (s.sheet || s.inspect) ? 'min-height:600px' : '';
+    const tall = (s.sheet || s.inspect || s.cli) ? 'min-height:600px' : '';
     return html`<div class="stage"><div class="win" style=${tall}>
       <div class="bar">
         ${list && html`<button class="back" title="Choose other apps" aria-label="Choose other apps" onClick=${this.reset}><svg width="9" height="14" viewBox="0 0 9 14"><path d="M7 1.5L1.8 7 7 12.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`}
@@ -376,6 +392,7 @@ class App extends Component {
 
       ${s.sheet && this.renderSheet()}
       ${s.inspect && this.renderInspect()}
+      ${s.cli && this.renderCli()}
     </div></div>`;
   }
 }
