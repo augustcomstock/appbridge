@@ -364,7 +364,7 @@ class App extends Component {
         ${s.saved.length > 0 && html`<div class="head">Saved</div>${s.saved.map((it, i) => this.renderSaved(it, i))}`}
         ${(s.pending || s.disc.length > 0) && html`<div class="head second">Discovered${s.pending && html`<span class="breathe"></span>`}</div>`}
         ${s.disc.map(it => this.renderDisc(it))}
-        ${s.pending && html`<div class="ghost"><span class="box"></span><div class="lines"><span class="shim"></span><span class="shim thin"></span></div></div>`}
+        ${s.pending && html`<div class="ghost"><span class="box"></span><div class="lines"><span class="shim"></span></div></div>`}
         ${s.discError && html`<div class="empty bad">${s.discError}</div>`}
         ${!s.pending && !s.discError && s.disc.length === 0 && html`<div class="empty">Nothing new this time. Describe a specific task to look deeper.</div>`}
       </div>
