@@ -44,7 +44,7 @@ const Tick = ({ stroke = '#111' }) => html`<svg width="10" height="8" viewBox="0
 
 class App extends Component {
   state = { apps: [], L: null, R: null, health: null, phase: 'idle', prompt: '', pick: null, q: '', hov: false,
-    saved: [], disc: [], pending: false, activity: '', discError: null,
+    saved: [], disc: [], pending: false, discError: null,
     sel: {}, st: {}, note: {}, just: {}, sheet: null, inspect: null, toast: null };
   canvas = createRef();
   hero = createRef();
@@ -107,7 +107,7 @@ class App extends Component {
   start = async () => {
     const s = this.state;
     if (s.phase !== 'idle' || !s.L || !s.R) return;
-    this.setState({ phase: 'merge', pick: null, hov: false, disc: [], discError: null, activity: '' });
+    this.setState({ phase: 'merge', pick: null, hov: false, disc: [], discError: null });
     this.galaxy.merge();
     setTimeout(() => { if (this.state.phase === 'merge') this.setState({ phase: 'list' }); }, MERGE_MS * .8);
     const health = s.health?.loggedIn ? s.health : await api('/api/health').catch(() => s.health);
@@ -118,13 +118,12 @@ class App extends Component {
     try {
       const { job } = await api('/api/discover', { a: s.L, b: s.R, prompt: s.prompt.trim() });
       this.listen(job, ev => {
-        if (ev.type === 'status') this.setState({ activity: ev.text });
         if (ev.type === 'candidate') this.setState(x => {
           const c = { ...ev.candidate, dir: this.arrows(ev.candidate.directions)[0] };
           const i = x.disc.findIndex(d => d.id === c.id);
           return { disc: i < 0 ? [...x.disc, c] : x.disc.map((d, j) => (j === i ? { ...c, dir: d.dir } : d)) };
         });
-        if (ev.type === 'done') { this.galaxy.generating(false); this.setState({ pending: false, activity: '', discError: ev.ok ? null : (ev.error || 'Discovery stopped early.') }); }
+        if (ev.type === 'done') { this.galaxy.generating(false); this.setState({ pending: false, discError: ev.ok ? null : (ev.error || 'Discovery stopped early.') }); }
       });
     } catch (e) {
       this.galaxy.generating(false);
@@ -226,11 +225,10 @@ class App extends Component {
     const s = this.state;
     const running = s.st[it.id] === 'running', done = !running && s.just[it.id], err = (s.note[it.id] || '').startsWith('!') ? s.note[it.id].slice(1) : null;
     const arrow = this.arrows(it.directions)[0];
-    const last = it.lastRun ? `Last run ${ago(it.lastRun.at)} · ${summary(it.lastRun.counts)}` : 'Built · not run yet';
     return html`<div class="row" key=${it.id} style=${`animation-delay:${(.25 + i * .07).toFixed(2)}s`}>
       <span class="lead">${running ? html`<span class="spin"></span>` : done === 'ok' ? html`<span class="ok"><svg width="9" height="7" viewBox="0 0 9 7"><path d="M1 3.6L3.4 6 8 1" fill="none" stroke="#0b2a12" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : html`<span class="dot"></span>`}</span>
       <div class="text"><span class="title"><span>${it.title}</span></span>
-        <span class=${'sub' + (err ? ' bad' : done === 'ok' ? ' good' : '')} title=${err || ''}>${running ? 'Transferring…' : err || last}</span></div>
+        ${(running || err) && html`<span class=${'sub' + (err ? ' bad' : '')} title=${err || ''}>${running ? 'Transferring…' : err}</span>`}</div>
       <span class="dir">${this.chip(arrow, running && FLOW[arrow])}</span>
       <button class="method" title=${`${METHOD[it.method]} · how this was found`} aria-label="How this was found" onClick=${() => this.inspect(it.id)}><${MethodIcon} m=${it.method} /></button>
       <button class="run" disabled=${running} onClick=${() => this.openSheet(it.id)}>Run</button>
@@ -366,7 +364,7 @@ class App extends Component {
         ${s.saved.length > 0 && html`<div class="head">Saved</div>${s.saved.map((it, i) => this.renderSaved(it, i))}`}
         ${(s.pending || s.disc.length > 0) && html`<div class="head second">Discovered${s.pending && html`<span class="breathe"></span>`}</div>`}
         ${s.disc.map(it => this.renderDisc(it))}
-        ${s.pending && html`<div class="ghost"><span class="box"></span><div class="lines"><span class="shim"></span>${s.activity ? html`<span class="activity">${s.activity}</span>` : html`<span class="shim thin"></span>`}</div></div>`}
+        ${s.pending && html`<div class="ghost"><span class="box"></span><div class="lines"><span class="shim"></span><span class="shim thin"></span></div></div>`}
         ${s.discError && html`<div class="empty bad">${s.discError}</div>`}
         ${!s.pending && !s.discError && s.disc.length === 0 && html`<div class="empty">Nothing new this time. Describe a specific task to look deeper.</div>`}
       </div>
