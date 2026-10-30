@@ -9,6 +9,8 @@
 [![Claude Code](https://img.shields.io/badge/agent-Claude%20Code-111?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 [![Reverse engineering](https://img.shields.io/badge/RE-REA%20%2B%20Ghidra-111)](https://github.com/morluto/rea)
 
+### No API? No problem.
+
 <img src="docs/hero.png" alt="AppBridge with Obsidian on the left and Notes on the right, ready to discover integrations" width="820">
 
 </div>
